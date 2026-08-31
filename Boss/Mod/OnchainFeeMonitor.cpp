@@ -63,6 +63,16 @@ auto constexpr hi_to_lo_percentile = double(17);
 auto constexpr mid_percentile = double(20);
 auto constexpr lo_to_hi_percentile = double(23);
 
+/* Absolute floor: a feerate at or below this is "low" regardless of
+ * the percentile history.  On chains whose feerate band is flat
+ * (signet variants, quiet testnets -- or mainnet resting periods),
+ * the percentile thresholds collapse onto the band floor and
+ * "low" only ever fires on the sub-percentile minority of ticks,
+ * even though the feerate is, in absolute terms, as cheap as the
+ * chain ever gets.  1000 sat/kw is ~4 sat/vB: below it, waiting for
+ * a lower percentile only delays cheap onchain action.  */
+auto constexpr absolute_low_feerate_perkw = double(1000);
+
 }
 
 namespace Boss { namespace Mod {
@@ -242,7 +252,10 @@ private:
 						  ](Sqlite3::Tx tx) {
 				auto feerates = get_percentile_feerates(tx);
 				tx.commit();
-				is_low_fee_flag = *saved_feerate < feerates.mid;
+				is_low_fee_flag = ( (*saved_feerate < feerates.mid)
+						   || (*saved_feerate
+						       <= absolute_low_feerate_perkw)
+						   );
 				return report_fee("Init", feerates);
 			});
 		});
@@ -446,10 +459,14 @@ private:
 				 */
 				auto feerates = get_percentile_feerates(tx);
 				if (is_low_fee_flag) {
-					if (*saved_feerate > feerates.l2h)
+					if ( *saved_feerate > feerates.l2h
+					  && *saved_feerate
+						 > absolute_low_feerate_perkw)
 						is_low_fee_flag = false;
 				} else {
-					if (*saved_feerate <= feerates.h2l)
+					if (  *saved_feerate <= feerates.h2l
+					   || *saved_feerate
+						  <= absolute_low_feerate_perkw)
 						is_low_fee_flag = true;
 				}
 				tx.commit();
@@ -479,7 +496,10 @@ private:
 						  ](Sqlite3::Tx tx) {
 				auto feerates = get_percentile_feerates(tx);
 				tx.commit();
-				is_low_fee_flag = *saved_feerate <= feerates.mid;
+				is_low_fee_flag = ( (*saved_feerate <= feerates.mid)
+						   || (*saved_feerate
+						       <= absolute_low_feerate_perkw)
+						   );
 				return report_fee("Init", feerates);
 			});
 		});
